@@ -1,0 +1,5 @@
+bin/
+obj/
+
+*.Map.Gbx
+output.json
