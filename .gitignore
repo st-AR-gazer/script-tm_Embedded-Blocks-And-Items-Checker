@@ -3,3 +3,4 @@ obj/
 
 *.Map.Gbx
 output.json
+out_*.json
