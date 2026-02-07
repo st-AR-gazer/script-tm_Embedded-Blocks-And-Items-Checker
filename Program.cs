@@ -96,7 +96,7 @@ internal static class Program
             ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             : null;
         using var incrementalArrayWriter = !outputIsDirectory && !string.IsNullOrWhiteSpace(opts.OutputPath)
-            ? new IncrementalJsonArrayWriter(opts.OutputPath, jsonOptions.WriteIndented)
+            ? new IncrementalJsonArrayWriter(opts.OutputPath!, jsonOptions.WriteIndented)
             : null;
 
         foreach (var mapPath in mapPaths)
@@ -196,7 +196,7 @@ internal static class Program
     private static bool IsMapGbxPath(string path)
         => path.EndsWith(".Map.Gbx", StringComparison.OrdinalIgnoreCase);
 
-    private static bool ShouldTreatOutputAsDirectory(string outputPath)
+    private static bool ShouldTreatOutputAsDirectory(string? outputPath)
     {
         if (string.IsNullOrWhiteSpace(outputPath))
             return false;
@@ -222,7 +222,7 @@ internal static class Program
         return last == Path.DirectorySeparatorChar || last == Path.AltDirectorySeparatorChar;
     }
 
-    private static void WriteJsonOutputFile(string outputPath, string json)
+    private static void WriteJsonOutputFile(string? outputPath, string json)
     {
         if (string.IsNullOrWhiteSpace(outputPath))
             return;
@@ -235,7 +235,7 @@ internal static class Program
     }
 
     private static void WriteReportToOutputDirectory(
-        string outputDirectory,
+        string? outputDirectory,
         EmbeddedReport report,
         JsonSerializerOptions jsonOptions,
         HashSet<string>? usedFallbackNames)
@@ -777,11 +777,21 @@ internal static class Program
         if (args.Contains("--help", StringComparer.OrdinalIgnoreCase))
             throw new ArgException("Help requested.");
 
-        if (args.Length < 2)
-            throw new ArgException("You must specify both <inputPath> and <outputPath>.");
+        if (args.Length < 1)
+            throw new ArgException("You must specify <inputPath>.");
 
         var inputPath = args[0];
-        var outputPath = args[1];
+
+        if (inputPath.StartsWith("--", StringComparison.Ordinal))
+            throw new ArgException("First argument must be <inputPath> (not a flag).");
+
+        string? outputPath = null;
+        int optionsStartIndex = 1;
+        if (args.Length > 1 && !args[1].StartsWith("--", StringComparison.Ordinal))
+        {
+            outputPath = args[1];
+            optionsStartIndex = 2;
+        }
 
         bool pretty = false;
         bool includeExpectedList = true;
@@ -790,7 +800,7 @@ internal static class Program
         bool recursiveDirectorySearch = false;
         bool dumpZipEntries = false;
 
-        for (int i = 2; i < args.Length; i++)
+        for (int i = optionsStartIndex; i < args.Length; i++)
         {
             var a = args[i];
             switch (a)
@@ -830,7 +840,7 @@ internal static class Program
     {
         Console.WriteLine(
 @"Usage:
-  tm_Embedded_Blocks_Items_Checker <inputPath> <outputPath> [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--recursive] [--dump-zip]
+  tm_Embedded_Blocks_Items_Checker <inputPath> [outputPath] [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--recursive] [--dump-zip]
 
 Flags:
   --pretty              Pretty-print JSON output
@@ -846,6 +856,7 @@ Notes:
   - 'NotProperlyEmbeddedItemModels' is computed from used custom items/blocks that are missing in the embedded ZIP.
   - ZIP entry paths are compared without the leading Items/ or Blocks/ prefix.
   - Paths starting with club: are excluded from missing and not-properly-embedded checks and reported as warnings.
+  - outputPath is optional. If omitted, no output file(s) are written (JSON is still printed to stdout).
   - outputPath can be a JSON file path or a directory path.
   - outputPath is treated as a directory when it exists as a directory, ends with a slash, or has no file extension.
   - If outputPath is a directory, one file per map is written using mapUid as file name.
@@ -855,7 +866,7 @@ Notes:
 
     private sealed record CliOptions(
         string InputPath,
-        string OutputPath,
+        string? OutputPath,
         bool Pretty,
         bool IncludeExpectedList,
         bool IncludeMapName,

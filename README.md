@@ -7,7 +7,7 @@ It compares:
 - custom item and block models used by the map
 - entries present in the map embedded ZIP data
 
-The tool prints JSON to stdout and also writes to the output path you provide.
+The tool prints JSON to stdout and optionally writes to the output path you provide.
 
 ## Requirements
 
@@ -17,11 +17,11 @@ The tool prints JSON to stdout and also writes to the output path you provide.
 ## Usage
 
 ```bash
-dotnet run -- <inputPath> <outputPath> [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--recursive] [--dump-zip]
+dotnet run -- <inputPath> [outputPath] [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--recursive] [--dump-zip]
 ```
 
 ```bash
-dotnet .\bin\Release\net8.0\EmbeddedBlocksAndItemsChecker.dll <inputPath> <outputPath> [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--recursive] [--dump-zip]
+dotnet .\bin\Release\net8.0\EmbeddedBlocksAndItemsChecker.dll <inputPath> [outputPath] [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--recursive] [--dump-zip]
 ```
 
 ## Flags
@@ -54,6 +54,7 @@ dotnet .\bin\Release\net8.0\EmbeddedBlocksAndItemsChecker.dll <inputPath> <outpu
 
 ## Output path behavior
 
+- If `outputPath` is omitted, no output file(s) are written.
 - If `outputPath` is a JSON file path, the tool writes one combined JSON payload to that file.
 - In folder input mode with a JSON file output path, objects are appended into a live JSON array so progress is saved continuously while existing entries stay in place.
 - If `outputPath` is a folder path, the tool writes one JSON file per map.
