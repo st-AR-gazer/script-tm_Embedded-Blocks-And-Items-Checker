@@ -1,0 +1,11 @@
+{
+  "overrides": [
+    {
+      "mapUid": "Ln74Kb41PaKrjxzywCeUFZmu9Dj",
+      "note": "Expected model name uses 'Particles_white.Gbx' while embedded ZIP contains the same asset as 'Particles32x32White.Item.Gbx'.",
+      "treatAsEmbeddedModelPaths": [
+        "1-Scenery/particles/Particles_white.Gbx"
+      ]
+    }
+  ]
+}

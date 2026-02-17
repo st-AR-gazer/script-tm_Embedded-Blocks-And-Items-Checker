@@ -17,11 +17,11 @@ The tool prints JSON to stdout and optionally writes to the output path you prov
 ## Usage
 
 ```bash
-dotnet run -- <inputPath> [outputPath] [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--recursive] [--dump-zip]
+dotnet run -- <inputPath> [outputPath] [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--recursive] [--dump-zip] [--relaxed-stem-match] [--manual-overrides <path>]
 ```
 
 ```bash
-dotnet .\bin\Release\net8.0\EmbeddedBlocksAndItemsChecker.dll <inputPath> [outputPath] [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--recursive] [--dump-zip]
+dotnet .\bin\Release\net8.0\EmbeddedBlocksAndItemsChecker.dll <inputPath> [outputPath] [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--recursive] [--dump-zip] [--relaxed-stem-match] [--manual-overrides <path>]
 ```
 
 ## Flags
@@ -33,6 +33,9 @@ dotnet .\bin\Release\net8.0\EmbeddedBlocksAndItemsChecker.dll <inputPath> [outpu
 - `--case-insensitive`: Compare model paths ignoring case (default)
 - `--recursive`: When `inputPath` is a folder, scan subfolders too
 - `--dump-zip`: Print embedded ZIP entry names to stderr (debug)
+- `--relaxed-stem-match`: Enable relaxed model stem fallback matching (off by default)
+- `--no-relaxed-stem-match`: Disable relaxed model stem fallback matching
+- `--manual-overrides <path>`: Load map-specific manual embedding overrides from a JSON file
 - `--help`: Print usage help and exit with code `2`
 
 ## Matching behavior
@@ -47,6 +50,8 @@ dotnet .\bin\Release\net8.0\EmbeddedBlocksAndItemsChecker.dll <inputPath> [outpu
 - Removes leading `Items/` or `Blocks/` before comparisons.
 - If embedded ZIP entries contain a Windows absolute path (e.g., `C:/Users/.../Documents/Trackmania/Items/...`), the tool extracts the portion after `Items/` or `Blocks/` before comparing.
 - If a model path does not match any embedded ZIP entry by path, it falls back to matching by unique `.Gbx` file name (and notes that it did so).
+- If `--relaxed-stem-match` is enabled, it can also fall back to a unique relaxed model stem match for filename-shape mismatches.
+- If `--manual-overrides` is provided, listed model paths are treated as embedded for the specified map UIDs.
 - Paths starting with `club:` cannot be validated outside the game client, so they are excluded from missing and not-properly-embedded checks and reported as warnings.
 - Custom model detection rules:
 - Anchored objects: custom if author is not `Nadeo` and id has a `/`.
@@ -62,6 +67,30 @@ dotnet .\bin\Release\net8.0\EmbeddedBlocksAndItemsChecker.dll <inputPath> [outpu
 - Per-map folder export uses `mapUid` as the file name: `<mapUid>.json`.
 - If `mapUid` is missing, a sanitized map file name is used as fallback.
 - If multiple maps share the same `mapUid`, they write to the same file name.
+
+## Manual Overrides JSON
+
+Use `--manual-overrides <path>` with a JSON file like:
+
+```json
+{
+  "overrides": [
+    {
+      "mapUid": "Ln74Kb41PaKrjxzywCeUFZmu9Dj",
+      "notes": [
+        "Expected model name differs from embedded ZIP naming.",
+        "Known naming mismatch: Particles_white vs Particles32x32White."
+      ],
+      "treatAsEmbeddedModelPaths": [
+        "1-Scenery/particles/Particles_white.Gbx"
+      ]
+    }
+  ]
+}
+```
+
+`note` is also supported as a single-string legacy alias and is appended into the map output `notes` array.
+`notes` values in a manual override entry are appended to that map report's `notes` array.
 
 ## JSON output fields
 
@@ -83,9 +112,9 @@ dotnet .\bin\Release\net8.0\EmbeddedBlocksAndItemsChecker.dll <inputPath> [outpu
 - `usedClubItemModels`: used custom models that start with `club:`
 - `notProperlyEmbeddedItemModels`: used custom models missing from embedded ZIP, or `null` on early failure
 - `error`: error string when checks fail, otherwise `null`
-- `note`: extra context such as missing expected embedded items in map data, embedded ZIP read errors, or club item warnings
+- `notes`: array of extra context messages (for example missing expected embedded items in map data, embedded ZIP read errors, or club item warnings)
 
-If embedded ZIP data cannot be opened, it is treated as empty and this is reported in `note`.
+If embedded ZIP data cannot be opened, it is treated as empty and this is reported in `notes`.
 
 JSON shape:
 - File input: one JSON object
@@ -106,5 +135,5 @@ dotnet build -c Release
 ## Publish Windows build
 
 ```bash
-dotnet publish -c Release -r win-x64 --self-contained false
+dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
 ```

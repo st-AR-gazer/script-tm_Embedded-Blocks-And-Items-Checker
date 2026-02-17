@@ -4,3 +4,12 @@ obj/
 *.Map.Gbx
 output.json
 out_*.json
+outs/
+output_*/
+
+analysis_dumps/
+analysis_dumps_raw/
+analysis_dumps_raw_*.json
+analysis_outputs/
+
+validation_outputs/

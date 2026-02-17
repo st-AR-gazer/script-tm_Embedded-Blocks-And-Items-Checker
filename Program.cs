@@ -18,6 +18,7 @@ internal static class Program
         try
         {
             var opts = ParseArgs(args);
+            var manualEmbeddingOverrides = LoadManualEmbeddingOverrides(opts.ManualOverridesPath);
 
             Gbx.LZO = new Lzo();
             Gbx.ZLib = new ZLib();
@@ -35,13 +36,13 @@ internal static class Program
 
             if (inputIsDirectory)
             {
-                var reports = AnalyzeDirectory(opts, jsonOptions, outputIsDirectory);
+                var reports = AnalyzeDirectory(opts, jsonOptions, outputIsDirectory, manualEmbeddingOverrides);
                 json = JsonSerializer.Serialize(reports, jsonOptions);
                 hasErrors = reports.Any(r => !string.IsNullOrWhiteSpace(r.Error));
             }
             else
             {
-                var report = AnalyzeMap(opts.InputPath, opts);
+                var report = AnalyzeMap(opts.InputPath, opts, manualEmbeddingOverrides);
                 json = JsonSerializer.Serialize(report, jsonOptions);
                 hasErrors = !string.IsNullOrWhiteSpace(report.Error);
 
@@ -76,7 +77,8 @@ internal static class Program
     private static List<EmbeddedReport> AnalyzeDirectory(
         CliOptions opts,
         JsonSerializerOptions jsonOptions,
-        bool outputIsDirectory)
+        bool outputIsDirectory,
+        IReadOnlyDictionary<string, ManualEmbeddingOverride> manualEmbeddingOverrides)
     {
         var searchOption = opts.RecursiveDirectorySearch
             ? SearchOption.AllDirectories
@@ -101,7 +103,7 @@ internal static class Program
 
         foreach (var mapPath in mapPaths)
         {
-            var report = AnalyzeMap(mapPath, opts);
+            var report = AnalyzeMap(mapPath, opts, manualEmbeddingOverrides);
             reports.Add(report);
 
             if (outputIsDirectory)
@@ -295,7 +297,10 @@ internal static class Program
         return new string(safeChars).Trim().Trim('.');
     }
 
-    private static EmbeddedReport AnalyzeMap(string mapPath, CliOptions opts)
+    private static EmbeddedReport AnalyzeMap(
+        string mapPath,
+        CliOptions opts,
+        IReadOnlyDictionary<string, ManualEmbeddingOverride> manualEmbeddingOverrides)
     {
         var report = new EmbeddedReport
         {
@@ -331,7 +336,7 @@ internal static class Program
         catch (Exception ex)
         {
             report.Error = "Failed to parse map GBX.";
-            report.Note = $"{ex.GetType().Name}: {ex.Message}";
+            AppendNote(report, $"{ex.GetType().Name}: {ex.Message}");
             report.HasProperlyEmbeddedBlocks = false;
             return report;
         }
@@ -342,6 +347,7 @@ internal static class Program
 
         var caseSensitive = opts.CaseSensitive;
         var comparer = caseSensitive ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
+        var manualOverride = GetManualEmbeddingOverrideForMap(map.MapUid, comparer, manualEmbeddingOverrides);
 
         var expected = map.ExpectedEmbeddedItemModels;
         report.ExpectedEmbeddedItemCount = expected?.Count ?? 0;
@@ -355,6 +361,8 @@ internal static class Program
 
         var embeddedSet = new HashSet<string>(comparer);
         var embeddedFileNameCounts = new Dictionary<string, int>(comparer);
+        var embeddedLossyPathCounts = new Dictionary<string, int>(comparer);
+        var embeddedRelaxedStemCounts = new Dictionary<string, int>(comparer);
         bool embeddedZipReadable = false;
         string? embeddedZipError = null;
         try
@@ -390,6 +398,17 @@ internal static class Program
                     var fileName = GetModelFileName(embeddedPath);
                     if (!string.IsNullOrWhiteSpace(fileName))
                         embeddedFileNameCounts[fileName] = embeddedFileNameCounts.TryGetValue(fileName, out var c) ? c + 1 : 1;
+
+                    var lossyPath = BuildLossyComparablePath(embeddedPath);
+                    if (!string.IsNullOrWhiteSpace(lossyPath))
+                        embeddedLossyPathCounts[lossyPath] = embeddedLossyPathCounts.TryGetValue(lossyPath, out var lossyCount) ? lossyCount + 1 : 1;
+
+                    if (opts.RelaxedStemMatching)
+                    {
+                        var relaxedStem = BuildRelaxedModelStem(embeddedPath);
+                        if (!string.IsNullOrWhiteSpace(relaxedStem))
+                            embeddedRelaxedStemCounts[relaxedStem] = embeddedRelaxedStemCounts.TryGetValue(relaxedStem, out var relaxedCount) ? relaxedCount + 1 : 1;
+                    }
                 }
             }
         }
@@ -403,6 +422,9 @@ internal static class Program
         var missingExpected = new List<string>();
         var excludedExpectedClub = new List<string>();
         int expectedMatchedByFileNameCount = 0;
+        int expectedMatchedByLossyPathCount = 0;
+        int expectedMatchedByRelaxedStemCount = 0;
+        int expectedMatchedByManualOverrideCount = 0;
         if (expected is null || expected.Count == 0)
         {
             AppendNote(report, "No expected embedded items found in the map data.");
@@ -421,10 +443,16 @@ internal static class Program
                     continue;
                 }
 
-                if (!IsPresentInEmbeddedZip(expectedPath, embeddedSet, embeddedFileNameCounts, out var matchedByFileName))
+                if (!IsPresentInEmbeddedZip(expectedPath, embeddedSet, embeddedFileNameCounts, embeddedLossyPathCounts, embeddedRelaxedStemCounts, manualOverride.Paths, opts.RelaxedStemMatching, out var matchedByFileName, out var matchedByLossyPath, out var matchedByRelaxedStem, out var matchedByManualOverride))
                     missingExpected.Add(BuildDisplayPath(ident));
                 else if (matchedByFileName)
                     expectedMatchedByFileNameCount++;
+                else if (matchedByLossyPath)
+                    expectedMatchedByLossyPathCount++;
+                else if (matchedByRelaxedStem)
+                    expectedMatchedByRelaxedStemCount++;
+                else if (matchedByManualOverride)
+                    expectedMatchedByManualOverrideCount++;
             }
         }
 
@@ -444,12 +472,15 @@ internal static class Program
 
         var notProperlyEmbedded = new List<string>();
         int usedMatchedByFileNameCount = 0;
+        int usedMatchedByLossyPathCount = 0;
+        int usedMatchedByRelaxedStemCount = 0;
+        int usedMatchedByManualOverrideCount = 0;
         foreach (var item in usedCustom)
         {
             if (IsAnyClubPath(item))
                 continue;
 
-            if (!IsPresentInEmbeddedZip(item, embeddedSet, embeddedFileNameCounts, out var matchedByFileName))
+            if (!IsPresentInEmbeddedZip(item, embeddedSet, embeddedFileNameCounts, embeddedLossyPathCounts, embeddedRelaxedStemCounts, manualOverride.Paths, opts.RelaxedStemMatching, out var matchedByFileName, out var matchedByLossyPath, out var matchedByRelaxedStem, out var matchedByManualOverride))
             {
                 notProperlyEmbedded.Add(item);
                 continue;
@@ -457,6 +488,12 @@ internal static class Program
 
             if (matchedByFileName)
                 usedMatchedByFileNameCount++;
+            else if (matchedByLossyPath)
+                usedMatchedByLossyPathCount++;
+            else if (matchedByRelaxedStem)
+                usedMatchedByRelaxedStemCount++;
+            else if (matchedByManualOverride)
+                usedMatchedByManualOverrideCount++;
         }
         notProperlyEmbedded.Sort(comparer);
         report.NotProperlyEmbeddedItemModels = notProperlyEmbedded;
@@ -490,7 +527,114 @@ internal static class Program
                 $"Matched {expectedMatchedByFileNameCount} expected model(s) and {usedMatchedByFileNameCount} used model(s) by file name only (embedded ZIP path differs).");
         }
 
+        if (expectedMatchedByLossyPathCount > 0 || usedMatchedByLossyPathCount > 0)
+        {
+            AppendNote(report,
+                $"Matched {expectedMatchedByLossyPathCount} expected model(s) and {usedMatchedByLossyPathCount} used model(s) by lossy Unicode path normalization.");
+        }
+
+        if (opts.RelaxedStemMatching && (expectedMatchedByRelaxedStemCount > 0 || usedMatchedByRelaxedStemCount > 0))
+        {
+            AppendNote(report,
+                $"Matched {expectedMatchedByRelaxedStemCount} expected model(s) and {usedMatchedByRelaxedStemCount} used model(s) by relaxed model stem matching.");
+        }
+
+        if (expectedMatchedByManualOverrideCount > 0 || usedMatchedByManualOverrideCount > 0)
+        {
+            AppendNote(report,
+                $"Applied manual embedding override. Matched {expectedMatchedByManualOverrideCount} expected model(s) and {usedMatchedByManualOverrideCount} used model(s).");
+        }
+
+        if (manualOverride.Notes.Length > 0)
+        {
+            foreach (var manualNote in manualOverride.Notes)
+                AppendNote(report, manualNote);
+        }
+
         return report;
+    }
+
+    private static Dictionary<string, ManualEmbeddingOverride> LoadManualEmbeddingOverrides(string? overridesPath)
+    {
+        var result = new Dictionary<string, ManualEmbeddingOverride>(StringComparer.OrdinalIgnoreCase);
+
+        if (string.IsNullOrWhiteSpace(overridesPath))
+            return result;
+
+        if (!File.Exists(overridesPath))
+            throw new ArgException($"Manual overrides file does not exist: {overridesPath}");
+
+        ManualEmbeddingOverridesFile? file;
+        try
+        {
+            var json = File.ReadAllText(overridesPath);
+            file = JsonSerializer.Deserialize<ManualEmbeddingOverridesFile>(
+                json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (Exception ex)
+        {
+            throw new ArgException($"Failed to parse manual overrides file '{overridesPath}'. {ex.GetType().Name}: {ex.Message}");
+        }
+
+        if (file?.Overrides is null || file.Overrides.Count == 0)
+            return result;
+
+        foreach (var entry in file.Overrides)
+        {
+            var mapUid = entry.MapUid?.Trim();
+            if (string.IsNullOrWhiteSpace(mapUid))
+                throw new ArgException($"Manual overrides file '{overridesPath}' contains an entry with missing 'mapUid'.");
+
+            if (result.ContainsKey(mapUid))
+                throw new ArgException($"Manual overrides file '{overridesPath}' contains duplicate mapUid '{mapUid}'.");
+
+            var modelPaths = entry.TreatAsEmbeddedModelPaths?
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .ToArray()
+                ?? Array.Empty<string>();
+
+            var notes = new List<string>();
+            if (!string.IsNullOrWhiteSpace(entry.Note))
+                notes.Add(entry.Note.Trim());
+
+            if (entry.Notes is not null)
+            {
+                foreach (var note in entry.Notes)
+                {
+                    if (!string.IsNullOrWhiteSpace(note))
+                        notes.Add(note.Trim());
+                }
+            }
+
+            result[mapUid] = new ManualEmbeddingOverride(
+                Notes: notes.ToArray(),
+                TreatAsEmbeddedModelPaths: modelPaths);
+        }
+
+        return result;
+    }
+
+    private static ManualEmbeddingOverrideState GetManualEmbeddingOverrideForMap(
+        string? mapUid,
+        StringComparer comparer,
+        IReadOnlyDictionary<string, ManualEmbeddingOverride> manualEmbeddingOverrides)
+    {
+        if (string.IsNullOrWhiteSpace(mapUid))
+            return ManualEmbeddingOverrideState.Empty(comparer);
+
+        if (!manualEmbeddingOverrides.TryGetValue(mapUid, out var configured))
+            return ManualEmbeddingOverrideState.Empty(comparer);
+
+        var paths = new HashSet<string>(comparer);
+        foreach (var modelPath in configured.TreatAsEmbeddedModelPaths)
+        {
+            var canonical = CanonicalizeModelPath(modelPath);
+            if (!string.IsNullOrWhiteSpace(canonical))
+                paths.Add(canonical);
+        }
+
+        return new ManualEmbeddingOverrideState(paths, configured.Notes ?? Array.Empty<string>());
     }
 
     private static HashSet<string> BuildUsedCustomModels(CGameCtnChallenge map, StringComparer comparer)
@@ -623,17 +767,7 @@ internal static class Program
 
         if (LooksLikeWindowsAbsolutePath(p))
         {
-            const string slashItems = "/Items/";
-            const string slashBlocks = "/Blocks/";
-            int idxItems = p.LastIndexOf(slashItems, StringComparison.OrdinalIgnoreCase);
-            int idxBlocks = p.LastIndexOf(slashBlocks, StringComparison.OrdinalIgnoreCase);
-            if (idxItems >= 0 || idxBlocks >= 0)
-            {
-                if (idxItems > idxBlocks)
-                    p = p.Substring(idxItems + slashItems.Length);
-                else
-                    p = p.Substring(idxBlocks + slashBlocks.Length);
-            }
+            p = StripAbsoluteTrackmaniaPrefix(p);
         }
 
         while (true)
@@ -696,8 +830,50 @@ internal static class Program
     private static bool LooksLikeWindowsAbsolutePath(string path)
         => path.Length >= 3
             && char.IsLetter(path[0])
-            && path[1] == ':'
+            && (path[1] == ':' || path[1] == '_')
             && path[2] == '/';
+
+    private static string StripAbsoluteTrackmaniaPrefix(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return string.Empty;
+
+        string[] rootMarkers =
+        {
+            "/Trackmania/Items/",
+            "/Trackmania/Blocks/",
+            "/Trackmania2020/Items/",
+            "/Trackmania2020/Blocks/"
+        };
+
+        int bestRootIndex = int.MaxValue;
+        string? matchedRoot = null;
+        foreach (var marker in rootMarkers)
+        {
+            int idx = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0 && idx < bestRootIndex)
+            {
+                bestRootIndex = idx;
+                matchedRoot = marker;
+            }
+        }
+
+        if (matchedRoot is not null)
+            return path.Substring(bestRootIndex + matchedRoot.Length);
+
+        const string itemsMarker = "/Items/";
+        const string blocksMarker = "/Blocks/";
+        int idxItems = path.IndexOf(itemsMarker, StringComparison.OrdinalIgnoreCase);
+        int idxBlocks = path.IndexOf(blocksMarker, StringComparison.OrdinalIgnoreCase);
+
+        if (idxItems < 0 && idxBlocks < 0)
+            return path;
+
+        if (idxItems >= 0 && (idxBlocks < 0 || idxItems <= idxBlocks))
+            return path.Substring(idxItems + itemsMarker.Length);
+
+        return path.Substring(idxBlocks + blocksMarker.Length);
+    }
 
     private static bool LooksLikeGbxModelPath(string path)
         => path.EndsWith(".gbx", StringComparison.OrdinalIgnoreCase);
@@ -716,9 +892,19 @@ internal static class Program
         string modelPath,
         HashSet<string> embeddedSet,
         Dictionary<string, int> embeddedFileNameCounts,
-        out bool matchedByFileName)
+        Dictionary<string, int> embeddedLossyPathCounts,
+        Dictionary<string, int> embeddedRelaxedStemCounts,
+        HashSet<string> manualOverridePaths,
+        bool allowRelaxedStemMatching,
+        out bool matchedByFileName,
+        out bool matchedByLossyPath,
+        out bool matchedByRelaxedStem,
+        out bool matchedByManualOverride)
     {
         matchedByFileName = false;
+        matchedByLossyPath = false;
+        matchedByRelaxedStem = false;
+        matchedByManualOverride = false;
 
         var key = CanonicalizeModelPath(modelPath);
         if (string.IsNullOrWhiteSpace(key))
@@ -726,6 +912,21 @@ internal static class Program
 
         if (embeddedSet.Contains(key))
             return true;
+
+        if (manualOverridePaths.Contains(key))
+        {
+            matchedByManualOverride = true;
+            return true;
+        }
+
+        var lossyKey = BuildLossyComparablePath(key);
+        if (!string.IsNullOrWhiteSpace(lossyKey)
+            && embeddedLossyPathCounts.TryGetValue(lossyKey, out var lossyPathCount)
+            && lossyPathCount == 1)
+        {
+            matchedByLossyPath = true;
+            return true;
+        }
 
         if (!LooksLikeGbxModelPath(key))
             return false;
@@ -740,7 +941,81 @@ internal static class Program
             return true;
         }
 
+        if (allowRelaxedStemMatching)
+        {
+            var relaxedStem = BuildRelaxedModelStem(key);
+            if (!string.IsNullOrWhiteSpace(relaxedStem)
+                && embeddedRelaxedStemCounts.TryGetValue(relaxedStem, out var relaxedCount)
+                && relaxedCount == 1)
+            {
+                matchedByRelaxedStem = true;
+                return true;
+            }
+        }
+
         return false;
+    }
+
+    private static string BuildLossyComparablePath(string path)
+    {
+        var canonical = CanonicalizeModelPath(path);
+        if (string.IsNullOrWhiteSpace(canonical))
+            return string.Empty;
+
+        var sb = new StringBuilder(canonical.Length);
+        foreach (var c in canonical)
+        {
+            if (c <= 127)
+                sb.Append(c);
+        }
+
+        return NormalizePath(sb.ToString());
+    }
+
+    private static string BuildRelaxedModelStem(string path)
+    {
+        var canonical = CanonicalizeModelPath(path);
+        if (string.IsNullOrWhiteSpace(canonical))
+            return string.Empty;
+
+        var fileName = GetModelFileName(canonical);
+        if (string.IsNullOrWhiteSpace(fileName))
+            return string.Empty;
+
+        if (fileName.EndsWith(".gbx", StringComparison.OrdinalIgnoreCase))
+            fileName = fileName.Substring(0, fileName.Length - 4);
+
+        const string itemSuffix = ".item";
+        const string blockSuffix = ".block";
+        if (fileName.EndsWith(itemSuffix, StringComparison.OrdinalIgnoreCase))
+            fileName = fileName.Substring(0, fileName.Length - itemSuffix.Length);
+        else if (fileName.EndsWith(blockSuffix, StringComparison.OrdinalIgnoreCase))
+            fileName = fileName.Substring(0, fileName.Length - blockSuffix.Length);
+
+        var sb = new StringBuilder(fileName.Length);
+        for (int i = 0; i < fileName.Length; i++)
+        {
+            var c = fileName[i];
+            if (char.IsLetter(c))
+            {
+                if ((c == 'x' || c == 'X')
+                    && i > 0
+                    && i + 1 < fileName.Length
+                    && char.IsDigit(fileName[i - 1])
+                    && char.IsDigit(fileName[i + 1]))
+                {
+                    continue;
+                }
+
+                sb.Append(char.ToLowerInvariant(c));
+            }
+        }
+
+        var stem = sb.ToString();
+        if (stem.Length < 8)
+            return string.Empty;
+
+        return stem;
     }
 
     private static bool LooksLikeGbx(string path)
@@ -763,10 +1038,8 @@ internal static class Program
         if (string.IsNullOrWhiteSpace(note))
             return;
 
-        if (string.IsNullOrWhiteSpace(report.Note))
-            report.Note = note;
-        else
-            report.Note = report.Note + " " + note;
+        report.Notes ??= new List<string>();
+        report.Notes.Add(note.Trim());
     }
 
     private static CliOptions ParseArgs(string[] args)
@@ -799,10 +1072,20 @@ internal static class Program
         bool caseSensitive = false;
         bool recursiveDirectorySearch = false;
         bool dumpZipEntries = false;
+        bool relaxedStemMatching = false;
+        string? manualOverridesPath = null;
 
         for (int i = optionsStartIndex; i < args.Length; i++)
         {
             var a = args[i];
+            if (a.StartsWith("--manual-overrides=", StringComparison.OrdinalIgnoreCase))
+            {
+                manualOverridesPath = a.Substring("--manual-overrides=".Length).Trim();
+                if (string.IsNullOrWhiteSpace(manualOverridesPath))
+                    throw new ArgException("Missing path in --manual-overrides=<path>.");
+                continue;
+            }
+
             switch (a)
             {
                 case "--pretty":
@@ -826,6 +1109,23 @@ internal static class Program
                 case "--dump-zip":
                     dumpZipEntries = true;
                     break;
+                case "--relaxed-stem-match":
+                    relaxedStemMatching = true;
+                    break;
+                case "--no-relaxed-stem-match":
+                    relaxedStemMatching = false;
+                    break;
+                case "--manual-overrides":
+                    if (i + 1 >= args.Length)
+                        throw new ArgException("Missing path after --manual-overrides.");
+
+                    var pathArg = args[i + 1];
+                    if (pathArg.StartsWith("--", StringComparison.Ordinal))
+                        throw new ArgException("Missing path after --manual-overrides.");
+
+                    manualOverridesPath = pathArg;
+                    i++;
+                    break;
                 case "--help":
                     break;
                 default:
@@ -833,14 +1133,14 @@ internal static class Program
             }
         }
 
-        return new CliOptions(inputPath, outputPath, pretty, includeExpectedList, includeMapName, caseSensitive, recursiveDirectorySearch, dumpZipEntries);
+        return new CliOptions(inputPath, outputPath, pretty, includeExpectedList, includeMapName, caseSensitive, recursiveDirectorySearch, dumpZipEntries, relaxedStemMatching, manualOverridesPath);
     }
 
     private static void PrintHelp()
     {
         Console.WriteLine(
 @"Usage:
-  tm_Embedded_Blocks_Items_Checker <inputPath> [outputPath] [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--recursive] [--dump-zip]
+  tm_Embedded_Blocks_Items_Checker <inputPath> [outputPath] [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--recursive] [--dump-zip] [--relaxed-stem-match] [--manual-overrides <path>]
 
 Flags:
   --pretty              Pretty-print JSON output
@@ -850,11 +1150,17 @@ Flags:
   --case-insensitive    Match ZIP entry paths ignoring case (default)
   --recursive           When inputPath is a directory, scan subdirectories
   --dump-zip            Print embedded ZIP entry names to stderr (debug)
+  --relaxed-stem-match  Enable relaxed model stem fallback (off by default)
+  --no-relaxed-stem-match
+                       Disable relaxed model stem fallback
+  --manual-overrides    Path to a JSON file with map-specific embedding overrides
 
 Notes:
   - Expected embedded items are matched against the embedded ZIP entries.
   - 'NotProperlyEmbeddedItemModels' is computed from used custom items/blocks that are missing in the embedded ZIP.
   - ZIP entry paths are compared without the leading Items/ or Blocks/ prefix.
+  - Relaxed model stem fallback is disabled by default and can be enabled with --relaxed-stem-match.
+  - Manual overrides are loaded from --manual-overrides when provided.
   - Paths starting with club: are excluded from missing and not-properly-embedded checks and reported as warnings.
   - outputPath is optional. If omitted, no output file(s) are written (JSON is still printed to stdout).
   - outputPath can be a JSON file path or a directory path.
@@ -872,8 +1178,37 @@ Notes:
         bool IncludeMapName,
         bool CaseSensitive,
         bool RecursiveDirectorySearch,
-        bool DumpZipEntries
+        bool DumpZipEntries,
+        bool RelaxedStemMatching,
+        string? ManualOverridesPath
     );
+
+    private sealed class ManualEmbeddingOverridesFile
+    {
+        public List<ManualEmbeddingOverrideEntry>? Overrides { get; set; }
+    }
+
+    private sealed class ManualEmbeddingOverrideEntry
+    {
+        public string? MapUid { get; set; }
+        public string? Note { get; set; }
+        public string[]? Notes { get; set; }
+        public string[]? TreatAsEmbeddedModelPaths { get; set; }
+    }
+
+    private sealed record ManualEmbeddingOverride(
+        string[] Notes,
+        string[] TreatAsEmbeddedModelPaths
+    );
+
+    private sealed record ManualEmbeddingOverrideState(
+        HashSet<string> Paths,
+        string[] Notes
+    )
+    {
+        public static ManualEmbeddingOverrideState Empty(StringComparer comparer)
+            => new ManualEmbeddingOverrideState(new HashSet<string>(comparer), Array.Empty<string>());
+    }
 
     private sealed class EmbeddedReport
     {
@@ -899,7 +1234,7 @@ Notes:
         public List<string>? NotProperlyEmbeddedItemModels { get; set; }
 
         public string? Error { get; set; }
-        public string? Note { get; set; }
+        public List<string>? Notes { get; set; }
     }
 
     private sealed class ArgException : Exception
