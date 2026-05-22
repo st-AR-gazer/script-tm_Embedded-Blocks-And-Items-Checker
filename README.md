@@ -148,7 +148,7 @@ A sample manifest is included at `map_inspection_suite.example.json`.
 - If `--manual-overrides` is provided, listed model paths are treated as embedded for the specified map UIDs.
 - Paths starting with `club:` cannot be validated outside the game client, so they are excluded from missing and not-properly-embedded checks and reported as warnings.
 - Custom model detection rules:
-- Anchored objects: custom if author is not `Nadeo` and id has a `/`.
+- Anchored objects: custom if author is not `Nadeo` and id has a `/`, or id is a bare `.Gbx` model file name.
 - Blocks: custom if author is not `Nadeo` and id has a `/`, or id uses the custom block suffix (that suffix is removed before compare).
 
 ## Output path behavior
@@ -216,11 +216,11 @@ JSON shape:
 
 ## Exit codes
 
-- `0`: Completed and all produced reports have `error = null`
-- `1`: At least one produced report has `error`, or fatal unhandled exception
+- `0`: Completed successfully
+- `1`: Fatal unhandled exception, or at least one analyzer/inspector report has an analyzer error, missing expected models, or not-properly-embedded models
 - `2`: Argument error (`--help`, missing args, unknown flag)
 
-For `run-suite`, exit code `1` is also used when a case expectation does not match the produced report.
+For `run-suite`, known-bad maps can still exit `0` when their expectations match. Exit code `1` is used when a case expectation does not match or a case has an analyzer error.
 
 ## Build
 

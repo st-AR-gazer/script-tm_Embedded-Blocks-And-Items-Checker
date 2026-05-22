@@ -35,7 +35,7 @@ internal static partial class Program
             };
 
             string json;
-            bool hasErrors;
+            bool hasFailures;
             bool inputIsDirectory = Directory.Exists(opts.InputPath);
             bool outputIsDirectory = ShouldTreatOutputAsDirectory(opts.OutputPath);
 
@@ -43,13 +43,13 @@ internal static partial class Program
             {
                 var reports = AnalyzeDirectory(opts, jsonOptions, outputIsDirectory, manualEmbeddingOverrides);
                 json = JsonSerializer.Serialize(reports, jsonOptions);
-                hasErrors = reports.Any(r => !string.IsNullOrWhiteSpace(r.Error));
+                hasFailures = reports.Any(ReportShouldFail);
             }
             else
             {
                 var report = AnalyzeMap(opts.InputPath, opts, manualEmbeddingOverrides);
                 json = JsonSerializer.Serialize(report, jsonOptions);
-                hasErrors = !string.IsNullOrWhiteSpace(report.Error);
+                hasFailures = ReportShouldFail(report);
 
                 if (outputIsDirectory)
                 {
@@ -63,7 +63,7 @@ internal static partial class Program
             }
 
             Console.WriteLine(json);
-            return hasErrors ? 1 : 0;
+            return hasFailures ? 1 : 0;
         }
         catch (ArgException ex)
         {

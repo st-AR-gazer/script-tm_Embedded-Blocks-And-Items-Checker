@@ -305,13 +305,10 @@ internal static partial class Program
         if (string.IsNullOrWhiteSpace(path))
             return false;
 
-        if (!path.Contains('/'))
-            return false;
-
         if (IsNadeoAuthor(ident.Author))
             return false;
 
-        return !string.IsNullOrWhiteSpace(path);
+        return path.Contains('/') || LooksLikeGbxModelPath(path);
     }
 
 

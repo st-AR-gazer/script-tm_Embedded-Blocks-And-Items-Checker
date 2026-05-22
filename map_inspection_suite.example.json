@@ -11,6 +11,26 @@
       ]
     },
     {
+      "label": "Known missing item - Spring 2023 11 CPLess Reverse",
+      "tmxMapId": "113952",
+      "expectHasProperlyEmbeddedBlocks": false,
+      "expectNotProperlyEmbeddedItemCount": 1,
+      "expectMissingExpectedEmbeddedItemCount": 0,
+      "notes": [
+        "This map uses NoStart/TechNoStart.Item.Gbx, has no embedded ZIP, and has no ExpectedEmbeddedItemModels list."
+      ]
+    },
+    {
+      "label": "Known bare item id - NoodlyRoad underwater bubbles",
+      "tmxMapId": "298201",
+      "expectHasProperlyEmbeddedBlocks": false,
+      "expectNotProperlyEmbeddedItemCount": 1,
+      "expectMissingExpectedEmbeddedItemCount": 0,
+      "notes": [
+        "This map has one non-Nadeo anchored object stored as bare id underwaterbubbles.Item.Gbx, plus club items."
+      ]
+    },
+    {
       "label": "Local map inspection example",
       "mapPath": "test_maps\\Black Narcissus.Map.Gbx",
       "notes": [

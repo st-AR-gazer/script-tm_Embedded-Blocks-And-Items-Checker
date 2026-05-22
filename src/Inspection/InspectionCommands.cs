@@ -61,7 +61,7 @@ internal static partial class Program
         var result = RunInspectionBundle(outputDirectory, source, opts.Common, manualOverrides, localSourcePath: null);
         var json = JsonSerializer.Serialize(result, jsonOptions);
         Console.WriteLine(json);
-        return string.IsNullOrWhiteSpace(result.Report?.Error) ? 0 : 1;
+        return ReportShouldFail(result.Report) ? 1 : 0;
     }
 
 
@@ -83,7 +83,7 @@ internal static partial class Program
         var result = RunInspectionBundle(outputDirectory, source, opts.Common, manualOverrides, opts.MapPath);
         var json = JsonSerializer.Serialize(result, jsonOptions);
         Console.WriteLine(json);
-        return string.IsNullOrWhiteSpace(result.Report?.Error) ? 0 : 1;
+        return ReportShouldFail(result.Report) ? 1 : 0;
     }
 
 
