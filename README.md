@@ -14,6 +14,14 @@ The tool prints JSON to stdout and optionally writes to the output path you prov
 - .NET 8 SDK or runtime
 - A Trackmania `.Map.Gbx` file, or a folder containing `.Map.Gbx` files
 
+## Project layout
+
+- `src/Program.cs`: CLI entrypoint and shared startup
+- `src/Cli/`: legacy analyzer CLI parsing and help text
+- `src/Analysis/`: map analysis, matching, output writing, and manual overrides
+- `src/Inspection/`: TMX download, inspection artifact writing, and regression suite runner
+- `src/Models/`: private report and configuration models shared by the partial program files
+
 ## Usage
 
 ```bash
@@ -22,6 +30,18 @@ dotnet run -- <inputPath> [outputPath] [--pretty] [--no-expected-list] [--no-map
 
 ```bash
 dotnet .\bin\Release\net8.0\EmbeddedBlocksAndItemsChecker.dll <inputPath> [outputPath] [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--recursive] [--dump-zip] [--relaxed-stem-match] [--manual-overrides <path>]
+```
+
+```bash
+dotnet run -- inspect-tmx <tmxMapId> [outputDirectory] [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--dump-zip] [--relaxed-stem-match] [--manual-overrides <path>] [--extract-zip|--no-extract-zip]
+```
+
+```bash
+dotnet run -- inspect-map <mapPath> [outputDirectory] [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--dump-zip] [--relaxed-stem-match] [--manual-overrides <path>] [--extract-zip|--no-extract-zip]
+```
+
+```bash
+dotnet run -- run-suite <suitePath> [outputDirectory] [--pretty] [--no-expected-list] [--no-map-name] [--case-sensitive|--case-insensitive] [--dump-zip] [--relaxed-stem-match] [--manual-overrides <path>] [--extract-zip|--no-extract-zip]
 ```
 
 ## Flags
@@ -36,7 +56,81 @@ dotnet .\bin\Release\net8.0\EmbeddedBlocksAndItemsChecker.dll <inputPath> [outpu
 - `--relaxed-stem-match`: Enable relaxed model stem fallback matching (off by default)
 - `--no-relaxed-stem-match`: Disable relaxed model stem fallback matching
 - `--manual-overrides <path>`: Load map-specific manual embedding overrides from a JSON file
+- `--extract-zip`: Extract embedded ZIP entries in inspector workflows (default)
+- `--no-extract-zip`: Skip embedded ZIP extraction in inspector workflows
 - `--help`: Print usage help and exit with code `2`
+
+## Inspector workflows
+
+These commands are meant for the "why did this map get flagged?" debugging loop.
+
+### `inspect-tmx`
+
+Downloads a Trackmania Exchange map by id using `https://trackmania.exchange/mapgbx/<id>`, then builds a self-contained inspection folder.
+
+Example:
+
+```bash
+dotnet run -- inspect-tmx 44741 --pretty
+```
+
+Default output goes under `inspection_runs/`. You can also pass a folder explicitly:
+
+```bash
+dotnet run -- inspect-tmx 44741 .\inspection_runs\kiafosu-check --pretty
+```
+
+### `inspect-map`
+
+Copies a local `.Map.Gbx` into an inspection folder and writes the same artifacts:
+
+```bash
+dotnet run -- inspect-map .\test_maps\Black Narcissus.Map.Gbx .\inspection_runs\black-narcissus --pretty
+```
+
+### Inspection folder contents
+
+Each inspection folder contains:
+
+- `input/`: the inspected map file
+- `report.json`: the analyzer JSON report
+- `summary.txt`: quick human-readable summary
+- `notes.txt`: report notes line by line
+- `source.json`: source metadata (TMX id, URLs, original local path, stored map path)
+- `lists/expectedEmbeddedItemModels.txt`
+- `lists/usedCustomItemModels.txt`
+- `lists/missingExpectedEmbeddedItemModels.txt`
+- `lists/excludedClubExpectedItemModels.txt`
+- `lists/usedClubItemModels.txt`
+- `lists/notProperlyEmbeddedItemModels.txt`
+- `embedded-zip/entries.txt`: raw entry name to canonical path mapping
+- `embedded-zip/manifest.json`: structured ZIP entry metadata
+- `embedded-zip/extracted/`: extracted embedded ZIP payload when `--no-extract-zip` is not used
+
+## Regression suite workflow
+
+`run-suite` lets you keep a list of known cases and rerun them after matching logic changes.
+
+Example:
+
+```bash
+dotnet run -- run-suite .\map_inspection_suite.example.json --pretty
+```
+
+The suite file is JSON with a `cases` array. Each case must define exactly one of:
+
+- `tmxMapId`
+- `mapPath`
+
+Optional expectation fields:
+
+- `expectHasProperlyEmbeddedBlocks`
+- `expectNotProperlyEmbeddedItemCount`
+- `expectMissingExpectedEmbeddedItemCount`
+
+Relative `mapPath` values are resolved from the suite file's directory.
+
+A sample manifest is included at `map_inspection_suite.example.json`.
 
 ## Matching behavior
 
@@ -125,6 +219,8 @@ JSON shape:
 - `0`: Completed and all produced reports have `error = null`
 - `1`: At least one produced report has `error`, or fatal unhandled exception
 - `2`: Argument error (`--help`, missing args, unknown flag)
+
+For `run-suite`, exit code `1` is also used when a case expectation does not match the produced report.
 
 ## Build
 

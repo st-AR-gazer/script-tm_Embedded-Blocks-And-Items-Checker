@@ -13,3 +13,7 @@ analysis_dumps_raw_*.json
 analysis_outputs/
 
 validation_outputs/
+
+inspection_runs/
+inspection_suites/
+.smoke_*/

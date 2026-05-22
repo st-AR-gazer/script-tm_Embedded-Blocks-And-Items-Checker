@@ -1,0 +1,21 @@
+{
+  "cases": [
+    {
+      "label": "TMX smoke test - Kiafosu",
+      "tmxMapId": "44741",
+      "expectHasProperlyEmbeddedBlocks": true,
+      "expectNotProperlyEmbeddedItemCount": 0,
+      "expectMissingExpectedEmbeddedItemCount": 0,
+      "notes": [
+        "Verified against the TMX download workflow on 2026-05-22."
+      ]
+    },
+    {
+      "label": "Local map inspection example",
+      "mapPath": "test_maps\\Black Narcissus.Map.Gbx",
+      "notes": [
+        "Relative local map paths are resolved from this suite file's directory."
+      ]
+    }
+  ]
+}
